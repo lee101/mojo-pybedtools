@@ -52,13 +52,18 @@ chromosomes; timings include materialising the result text and are the best of t
 
 | kernel | mojo-pybedtools | pybedtools/bedtools | speedup |
 | --- | ---: | ---: | ---: |
-| intersect -c | 88.64 ms | 232.37 ms | 2.62x |
-| coverage | 170.67 ms | 366.37 ms | 2.15x |
-| merge | 97.24 ms | 249.23 ms | 2.56x |
+| intersect -c | 30.24 ms | 208.67 ms | 6.90x |
+| coverage | 47.95 ms | 291.51 ms | 6.08x |
+| merge | 29.11 ms | 206.32 ms | 7.09x |
 
-These are real local measurements, not projections. The Python-facing parsing and BED
-record construction remain visible at this size. The interval sweeps are branch-heavy,
-memory-bound operations, so no GPU path is provided: host/device transfer costs exceed
+These are real local measurements, not projections. Profiling showed that the compiled
+sweeps were already a small fraction of end-to-end time; Python-facing BED record
+construction and redundant coordinate conversions were the hot path. Results now reuse
+their contiguous coordinate columns, construct normalized intervals without reparsing,
+and write coverage values directly into original-order NumPy buffers. The interval
+sweeps have variable-length, branch-heavy candidate scans, while merge has a loop-carried
+dependency, so SIMD and thread-launch overhead do not pay off for these kernels. Their
+arithmetic intensity is also too low for a GPU path: host/device transfer costs exceed
 their arithmetic work.
 
 ## How it works

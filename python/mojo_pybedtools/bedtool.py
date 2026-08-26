@@ -11,7 +11,7 @@ import numpy as np
 from ._lib import lib
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Interval:
     """A BED record with pybedtools-compatible core attributes."""
 
@@ -26,6 +26,12 @@ class Interval:
         if start < 0 or end < start:
             raise ValueError("BED coordinates must satisfy 0 <= start <= end")
         object.__setattr__(self, "fields", (chrom, str(start), str(end)) + tuple(map(str, fields[3:])))
+
+    @classmethod
+    def _from_fields(cls, fields: tuple[str, ...]) -> "Interval":
+        interval = object.__new__(cls)
+        object.__setattr__(interval, "fields", fields)
+        return interval
 
     @property
     def chrom(self) -> str:
@@ -84,6 +90,24 @@ class BedTool:
         self._strand = np.fromiter(({"+": 1, "-": -1}.get(record.strand, 0) for record in self._records), dtype=np.int64, count=len(self._records))
         self._encoded_cache: dict[BedTool | None, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
 
+    @classmethod
+    def _from_records(
+        cls,
+        records: tuple[Interval, ...],
+        chrom: np.ndarray,
+        start: np.ndarray,
+        end: np.ndarray,
+        strand: np.ndarray,
+    ) -> "BedTool":
+        tool = object.__new__(cls)
+        tool._records = records
+        tool._chrom = chrom
+        tool._start = start
+        tool._end = end
+        tool._strand = strand
+        tool._encoded_cache = {}
+        return tool
+
     def __iter__(self) -> Iterator[Interval]:
         return iter(self._records)
 
@@ -91,7 +115,7 @@ class BedTool:
         return len(self._records)
 
     def __str__(self) -> str:
-        return "".join(map(str, self._records))
+        return "".join("\t".join(record.fields) + "\n" for record in self._records)
 
     def __repr__(self) -> str:
         return f"BedTool({len(self)} intervals)"
@@ -167,7 +191,11 @@ class BedTool:
         other = b if isinstance(b, BedTool) else BedTool(b)
         if c:
             counts = self._counts(other, f, F, r, e, s, S)
-            return BedTool([Interval(*a.fields, int(counts[i])) for i, a in enumerate(self._records)])
+            records = tuple(
+                Interval._from_fields(a.fields + (str(int(counts[i])),))
+                for i, a in enumerate(self._records)
+            )
+            return BedTool._from_records(records, self._chrom, self._start, self._end, self._strand)
         left, right = self._pairs(other, f, F, r, e, s, S)
         hit = np.zeros(len(self), dtype=bool)
         hit[left] = True
@@ -204,8 +232,23 @@ class BedTool:
         dst_s = np.empty(len(order), dtype=np.int64)
         dst_e = np.empty(len(order), dtype=np.int64)
         n = lib().mpbt_merge(chrom.ctypes.data, start.ctypes.data, end.ctypes.data, len(order), int(d), dst_c.ctypes.data, dst_s.ctypes.data, dst_e.ctypes.data)
-        names = {int(chrom[i]): self._records[int(order[i])].chrom for i in range(len(order))}
-        return BedTool([Interval(names[int(dst_c[i])], int(dst_s[i]), int(dst_e[i])) for i in range(n)])
+        labels = np.unique(self._chrom)
+        merged_chrom = labels[dst_c[:n]]
+        merged_start = dst_s[:n]
+        merged_end = dst_e[:n]
+        records = tuple(
+            Interval._from_fields((chrom_name, str(start_value), str(end_value)))
+            for chrom_name, start_value, end_value in zip(
+                merged_chrom.tolist(), merged_start.tolist(), merged_end.tolist()
+            )
+        )
+        return BedTool._from_records(
+            records,
+            merged_chrom,
+            merged_start,
+            merged_end,
+            np.zeros(n, dtype=np.int64),
+        )
 
     def subtract(self, b: "BedTool | str | Path | Iterable[object]", A: bool = False, f: float = 0.0, F: float = 0.0, r: bool = False, e: bool = False, s: bool = False, S: bool = False, **kwargs: object) -> "BedTool":
         """Remove overlapping pieces of A; ``A=True`` drops any hit record."""
@@ -241,21 +284,22 @@ class BedTool:
         (ao, ac, ast, aen, _), (_, bc, bst, ben, _) = self._encoded(other)  # type: ignore[misc]
         bases, counts = np.zeros(len(ao), dtype=np.int64), np.zeros(len(ao), dtype=np.int64)
         if len(ao) and len(bc):
-            lib().mpbt_coverage(ac.ctypes.data, ast.ctypes.data, aen.ctypes.data, bc.ctypes.data, bst.ctypes.data, ben.ctypes.data, len(ao), len(bc), bases.ctypes.data, counts.ctypes.data)
-        result: list[Interval | None] = [None] * len(self)
-        for sorted_i, original_i in enumerate(ao):
-            a = self._records[int(original_i)]
-            length = a.length
-            fraction = float(bases[sorted_i]) / length if length else 0.0
-            # bedtools emits its coverage fraction with seven decimal places.
-            result[int(original_i)] = Interval(
-                *a.fields,
-                int(counts[sorted_i]),
-                int(bases[sorted_i]),
-                length,
-                f"{fraction:.7f}",
+            lib().mpbt_coverage(ac.ctypes.data, ast.ctypes.data, aen.ctypes.data, bc.ctypes.data, bst.ctypes.data, ben.ctypes.data, ao.ctypes.data, len(ao), len(bc), bases.ctypes.data, counts.ctypes.data)
+        lengths = (self._end - self._start).tolist()
+        records = tuple(
+            Interval._from_fields(
+                a.fields + (
+                    str(count),
+                    str(base),
+                    str(length),
+                    f"{base / length if length else 0.0:.7f}",
+                )
             )
-        return BedTool(record for record in result if record is not None)
+            for a, count, base, length in zip(
+                self._records, counts.tolist(), bases.tolist(), lengths
+            )
+        )
+        return BedTool._from_records(records, self._chrom, self._start, self._end, self._strand)
 
 
 def create_interval_from_list(fields: Sequence[object]) -> Interval:

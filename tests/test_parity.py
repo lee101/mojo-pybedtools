@@ -74,6 +74,16 @@ def test_empty_merge_does_not_cross_the_ffi_boundary():
     assert str(ours("").merge()) == ""
 
 
+def test_materialized_results_remain_valid_inputs_to_kernels():
+    a, b = ours(A_TEXT), ours(B_TEXT)
+    counted = a.intersect(b, c=True)
+    covered = a.coverage(b)
+    merged = a.merge()
+    assert str(counted.intersect(b, c=True)) == str(upstream(str(counted)).intersect(upstream(B_TEXT), c=True))
+    assert str(covered.coverage(b)) == str(upstream(str(covered)).coverage(upstream(B_TEXT)))
+    assert str(merged.merge()) == str(upstream(str(merged)).sort().merge())
+
+
 def test_interval_surface_and_file_roundtrip(tmp_path):
     interval = create_interval_from_list(["chr4", 7, 11, "n", 3, "+"])
     assert isinstance(interval, Interval)

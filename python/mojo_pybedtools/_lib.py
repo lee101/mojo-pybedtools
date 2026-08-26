@@ -15,7 +15,7 @@ _SIGNATURES = {
     "mpbt_intersect_count": ([I] * 10 + [F, F] + [I] * 3, I),
     "mpbt_intersect_pairs": ([I] * 10 + [F, F] + [I] * 5, I),
     "mpbt_intersect_counts": ([I] * 10 + [F, F] + [I] * 4, None),
-    "mpbt_coverage": ([I] * 10, None),
+    "mpbt_coverage": ([I] * 11, None),
     "mpbt_merge": ([I] * 8, I),
 }
 _cached: ctypes.CDLL | None = None

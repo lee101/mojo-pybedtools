@@ -122,7 +122,7 @@ def mpbt_intersect_counts(
 @export("mpbt_coverage")
 def mpbt_coverage(
     achrom: Int, astart: Int, aend: Int, bchrom: Int, bstart: Int, bend: Int,
-    na: Int, nb: Int, bases: Int, counts: Int,
+    aorder: Int, na: Int, nb: Int, bases: Int, counts: Int,
 ) abi("C"):
     var ac = IPtr(unsafe_from_address=achrom)
     var ast = IPtr(unsafe_from_address=astart)
@@ -130,6 +130,7 @@ def mpbt_coverage(
     var bc = IPtr(unsafe_from_address=bchrom)
     var bst = IPtr(unsafe_from_address=bstart)
     var ben = IPtr(unsafe_from_address=bend)
+    var order = IPtr(unsafe_from_address=aorder)
     var ob = IPtr(unsafe_from_address=bases)
     var oc = IPtr(unsafe_from_address=counts)
     var first = 0
@@ -157,8 +158,8 @@ def mpbt_coverage(
                             uncovered_start = covered_until
                         sum += hi - uncovered_start
                         covered_until = hi
-        ob[i] = sum
-        oc[i] = hits
+        ob[order[i]] = sum
+        oc[order[i]] = hits
 
 
 @export("mpbt_merge")
